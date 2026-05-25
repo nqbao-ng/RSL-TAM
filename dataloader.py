@@ -292,13 +292,13 @@ class DailyDialogDataset(Dataset):
 
 class MELDDataset(Dataset):
     def __init__(self, path, windows, train=True):
-        videoIDs, videoSpeakers, videoLabels, videoText, \
-        videoAudio, videoVisual, videoSentence, trainVid, \
+        videoIDs, videoSpeakers, videoLabels, videoSentiments, videoText0, videoText1, videoText2, \
+        videoText3, videoAudio, videoVisual, videoSentence, trainVid, \
         testVid,_ = pickle.load(open(path, 'rb'), encoding='latin1')
         self.videoIDs = videoIDs
         self.videoSpeakers = videoSpeakers
         self.videoLabels = videoLabels
-        self.videoText = videoText
+        self.videoText = videoText0
         self.videoAudio = videoAudio
         self.videoVisual = videoVisual
         self.videoSentence = videoSentence
