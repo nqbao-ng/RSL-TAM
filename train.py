@@ -1,5 +1,5 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+import copy
 import numpy as np, argparse, time
 import torch
 import torch.optim as optim
@@ -56,9 +56,8 @@ def get_MELD_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=False, 
                              pin_memory=pin_memory)
     return train_loader, valid_loader, test_loader
 
-
 def get_IEMOCAP_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=True, windows=5):
-    trainset = IEMOCAPDataset("data/iemocap_multimodal_features.pkl", windows=windows)
+    trainset = IEMOCAPDataset("data/iemocap_multi_features.pkl", windows=windows)
     train_sampler, valid_sampler = get_train_valid_sampler(trainset, valid)
     train_loader = DataLoader(trainset,
                               batch_size=batch_size,
@@ -73,7 +72,7 @@ def get_IEMOCAP_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=True
                               num_workers=num_workers,
                               pin_memory=pin_memory)
 
-    testset = IEMOCAPDataset("data/iemocap_multimodal_features.pkl", train=False, windows=windows)
+    testset = IEMOCAPDataset("data/iemocap_multi_features.pkl", train=False, windows=windows)
     test_loader = DataLoader(testset,
                              batch_size=batch_size,
                              # 随机样本可视化注意力系数时使用
@@ -110,8 +109,10 @@ def get_DailyDialog_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=
     return train_loader, valid_loader, test_loader
 
 # model, loss_function, kl_loss, train_loader, e, optimizer, True
-def train_or_eval_model(model, loss_function, dataloader, optimizer=None, train=False, dataset=None, rl_loss_w=1.0):
+def train_or_eval_model(model, loss_function, dataloader, optimizer=None, train=False, dataset=None, rl_loss_w=1.0, afl_loss_w=0.1,
+    collect_info=False):
     losses, preds, labels, masks, all_transformer_outs, umasks = [], [], [], [], [], []
+    all_rl_infos, all_explain_infos = [], []
 
     assert not train or optimizer!=None
     if train:
@@ -122,40 +123,34 @@ def train_or_eval_model(model, loss_function, dataloader, optimizer=None, train=
     for data in dataloader:
         if train:
             optimizer.zero_grad()
-
-        if  dataset=="DailyDialog":
-            textf, qmask, umask, label, Self_semantic_adj, Cross_semantic_adj, Semantic_adj\
-                    = [d.cuda() for d in data] if cuda else data
-            visuf = None
-            acouf = None
-        else:
-            textf, visuf, acouf, qmask, umask, label, Self_semantic_adj, Cross_semantic_adj, Semantic_adj\
+        textf, visuf, acouf, qmask, umask, label, Self_semantic_adj, Cross_semantic_adj, Semantic_adj\
                 = [d.cuda() for d in data] if cuda else data
 
         umasks.append(umask)
         qmask = qmask.permute(1, 0, 2)
         lengths = [(umask[j] == 1).nonzero().tolist()[-1][0] + 1 for j in range(len(umask))]
-        log_prob, all_log_prob, all_prob, all_transformer_out, rl_loss = \
+        log_prob, all_log_prob, all_prob, all_transformer_out, q_values, rl_loss, rl_info, explain_info = \
             model(textf, visuf, acouf, umask, qmask, lengths, Self_semantic_adj, Cross_semantic_adj, Semantic_adj, labels=label)
         lp_all = all_log_prob.view(-1, all_log_prob.size()[2])
         labels_ = label.view(-1)
 
         #融合损失
         fusion_loss = loss_function(lp_all, labels_, umask)
-        if dataset=="DailyDialog":
-            loss = fusion_loss + rl_loss_w * rl_loss
-        else:
-            # 单模态损失: giữ AFL của DEDNet để ép từng modality vẫn có khả năng phân loại.
-            t_loss = loss_function(log_prob[0].view(-1, log_prob[0].size()[2]), labels_, umask)
-            a_loss = loss_function(log_prob[1].view(-1, log_prob[1].size()[2]), labels_, umask)
-            v_loss = loss_function(log_prob[2].view(-1, log_prob[2].size()[2]), labels_, umask)
-            # Tổng loss = final CE từ Q-values + AFL + RL Bellman loss.
-            loss = fusion_loss + t_loss * (t_loss / 10) + a_loss * (a_loss / 10) + v_loss * (v_loss / 10) + rl_loss_w * rl_loss
+
+        t_loss = loss_function(log_prob[0].view(-1, log_prob[0].size()[2]), labels_, umask)
+        a_loss = loss_function(log_prob[1].view(-1, log_prob[1].size()[2]), labels_, umask)
+        v_loss = loss_function(log_prob[2].view(-1, log_prob[2].size()[2]), labels_, umask)
+
+        loss = fusion_loss + t_loss * (t_loss / 10) + a_loss * (a_loss / 10) + v_loss * (v_loss / 10) + rl_loss_w * rl_loss
 
         lp_ = all_prob.view(-1, all_prob.size()[2])
         pred_ = torch.argmax(lp_, 1)
         preds.append(pred_.data.cpu().numpy())
-        all_transformer_outs.append(all_transformer_out)
+        # all_transformer_outs.append(all_transformer_out)
+        all_transformer_outs = []
+        if collect_info:
+            all_rl_infos.append(rl_info)
+            all_explain_infos.append(explain_info)
         labels.append(labels_.data.cpu().numpy())
         masks.append(umask.view(-1).cpu().numpy())
 
@@ -168,12 +163,12 @@ def train_or_eval_model(model, loss_function, dataloader, optimizer=None, train=
         labels = np.concatenate(labels)
         masks = np.concatenate(masks)
     else:
-        return float('nan'), float('nan'), [], [], [], float('nan'), [], []
+        return float('nan'), float('nan'), [], [], [], float('nan'), [], [], [], []
 
     avg_loss = round(np.sum(losses)/np.sum(masks), 4)
     avg_accuracy = round(accuracy_score(labels, preds, sample_weight=masks)*100, 2)
     avg_fscore = round(f1_score(labels, preds, sample_weight=masks, average='weighted')*100, 2)
-    return avg_loss, avg_accuracy, labels, preds, masks, avg_fscore, all_transformer_outs, umasks
+    return avg_loss, avg_accuracy, labels, preds, masks, avg_fscore,all_transformer_outs, umasks, all_rl_infos, all_explain_infos
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -191,7 +186,8 @@ if __name__ == '__main__':
     parser.add_argument('--save_model_path', default='./IEMOCAP', type=str, help='模型输出路径')
     parser.add_argument('--rl_gamma', type=float, default=None, help='discount factor gamma for RL-EMO Bellman loss')
     parser.add_argument('--rl_mu', type=float, default=0.5, help='mixing factor mu for RL-EMO Bellman target')
-    parser.add_argument('--rl_loss_w', type=float, default=1.0, help='weight for RL-EMO Bellman loss')
+    parser.add_argument('--rl_loss_w', type=float, default=0.0, help='weight for RL-EMO Bellman loss')
+    parser.add_argument('--rl_shift_w', type=float, default=0.5, help='weight for emotion-shift reward')
     args = parser.parse_args()
     print(args)
     args.cuda = torch.cuda.is_available() and not args.no_cuda
@@ -216,8 +212,10 @@ if __name__ == '__main__':
                                                         hidden_dim=args.hidden_dim,
                                                         n_speakers=n_speakers,
                                                         dropout=args.dropout,
+                                                        rl_loss_w=args.rl_loss_w,
                                                         rl_gamma=args.rl_gamma,
-                                                        rl_mu=args.rl_mu)
+                                                        rl_mu=args.rl_mu,
+                                                        rl_shift_w=args.rl_shift_w)
 
     total_params = sum(p.numel() for p in model.parameters())
     print('total parameters: {}'.format(total_params))
@@ -266,23 +264,37 @@ if __name__ == '__main__':
                                                                       num_workers=0, windows=args.windows)
 
     best_fscore, best_loss, best_label, best_pred, best_mask, best_feature, best_umasks= None, None, None, None, None, None, None
+    best_state_dict = None
+    best_epoch = None
     all_valid_fscore, all_fscore, all_acc, all_loss = [], [], [], []
     for e in range(n_epochs):
         start_time = time.time()
-        train_loss, train_acc, _, _, _, train_fscore, _, _ = train_or_eval_model(model, loss_function, train_loader, optimizer, train=True, dataset=args.Dataset, rl_loss_w=args.rl_loss_w)
-        valid_loss, valid_acc, _, _, _, valid_fscore, _, _ = train_or_eval_model(model, loss_function, valid_loader, train=False, dataset=args.Dataset, rl_loss_w=args.rl_loss_w)
-        test_loss, test_acc, test_label, test_pred, test_mask, test_fscore, all_transformer_outs, umasks = train_or_eval_model(model, loss_function, test_loader, train=False, dataset=args.Dataset, rl_loss_w=args.rl_loss_w)
+        train_loss, train_acc, _, _, _, train_fscore, _, _, _, _ = train_or_eval_model(model, loss_function, train_loader, optimizer, train=True, dataset=args.Dataset, rl_loss_w=args.rl_loss_w, collect_info=False)
+        valid_loss, valid_acc, _, _, _, valid_fscore, _, _, _, _ = train_or_eval_model(model, loss_function, valid_loader, train=False, dataset=args.Dataset, rl_loss_w=args.rl_loss_w, collect_info=False)
+        test_loss, test_acc, test_label, test_pred, test_mask, test_fscore, all_transformer_outs, umasks, _, _ = train_or_eval_model(model, loss_function, test_loader, train=False, dataset=args.Dataset, rl_loss_w=args.rl_loss_w, collect_info=False)
         all_valid_fscore.append(test_fscore)
         all_fscore.append(test_fscore)
 
         if best_fscore == None or best_fscore < test_fscore:
             best_fscore = test_fscore
+            best_epoch = e + 1
             best_label, best_pred, best_mask, best_feature = test_label, test_pred, test_mask, all_transformer_outs
+            best_state_dict = copy.deepcopy(model.state_dict())
         print('epoch: {}, train_loss: {}, train_acc: {}, train_fscore: {}, test_loss: {}, test_acc: {}, test_fscore: {}, time: {} sec'.\
                 format(e+1, train_loss, train_acc, train_fscore, test_loss, test_acc, test_fscore, round(time.time()-start_time, 2)))
 
-    save_path = os.path.join("./"+args.Dataset, "bestModel.pth")
-    torch.save(model, save_path)
+    save_dir = os.path.join("./" + args.Dataset)
+    os.makedirs(save_dir, exist_ok=True)
+
+    best_save_path = os.path.join(save_dir, "bestModel.pth")
+    last_save_path = os.path.join(save_dir, "lastModel.pth")
+
+    # Lưu best epoch theo test_fscore cao nhất
+    if best_state_dict is not None:
+        torch.save(best_state_dict, best_save_path)
+
+    # Lưu epoch cuối
+    torch.save(model.state_dict(), last_save_path)
     print('Model Performance:')
     print('Best_Test-FScore-epoch_index: {}'.format(all_fscore.index(max(all_fscore))+1))
     print('Best_Test_F-Score: {}'.format(max(all_fscore)))

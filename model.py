@@ -326,93 +326,162 @@ def Graphplt(Attention):
     plt.tight_layout()
     plt.show()
 
+def detach_dict(d):
+    out = {}
+    for k, v in d.items():
+        if torch.is_tensor(v):
+            out[k] = v.detach()
+        else:
+            out[k] = v
+    return out
 
+class RLEMOEnvironment:
+    def __init__(self, correct_reward=1.0, wrong_reward=-1.0):
+        self.correct_reward = correct_reward
+        self.wrong_reward = wrong_reward
+
+    def classification_reward(self, actions, labels, mask=None):
+        correct = actions.eq(labels)
+        rewards = torch.where(
+            correct,
+            torch.full_like(actions, self.correct_reward, dtype=torch.float),
+            torch.full_like(actions, self.wrong_reward, dtype=torch.float)
+        )
+        if mask is not None:
+            rewards = rewards * mask.float()
+        return rewards, correct.float()
+
+    def emotion_shift_reward(self, actions, labels, mask, shift_reward_w=0.5):
+        """
+        Reward model more strongly at emotion-shift points.
+        A shift point t means label[t] != label[t-1].
+        """
+        B, L = labels.shape
+        shift_mask = torch.zeros_like(labels, dtype=torch.bool)
+
+        if L > 1:
+            valid_transition = self.transition_mask(mask).bool()
+            shift_mask[:, 1:] = labels[:, 1:].ne(labels[:, :-1]) & valid_transition
+
+        correct = actions.eq(labels)
+        signed = torch.where(
+            correct,
+            torch.ones_like(labels, dtype=torch.float),
+            -torch.ones_like(labels, dtype=torch.float)
+        )
+
+        r_shift = shift_reward_w * shift_mask.float() * signed
+        return r_shift * mask.float(), shift_mask
+
+    def reward(
+        self,
+        actions,
+        labels,
+        mask,
+        shift_reward_w=0.5
+    ):
+        r_cls, correct = self.classification_reward(actions, labels, mask)
+        r_shift, shift_mask = self.emotion_shift_reward(actions, labels, mask, shift_reward_w)
+
+        r_total = r_cls + r_shift
+        r_total = r_total * mask.float()
+
+        reward_parts = {
+            "reward_cls": r_cls,
+            "reward_shift": r_shift,
+            "reward_total": r_total,
+            "correct_action": correct,
+            "label_shift": shift_mask,
+        }
+        return r_total, reward_parts
+
+    def transition_mask(self, mask):
+        mask = mask.bool()
+        return (mask[:, :-1] & mask[:, 1:]).float()
 
 class RLEMOClassifier(nn.Module):
-    """
-    RL-EMO style Q-value classifier for ERC/MERC.
-
-    Input:  fused utterance features H_f in shape [B, L, H].
-    Output: Q-values over emotion actions in shape [B, L, C].
-
-    The cross-entropy loss is still computed outside this module from
-    log_softmax(Q).  This module additionally returns a DQN/Bellman
-    emotion-flow loss following RL-EMO:
-
-        reward_t = +1 if argmax_a Q(s_t,a) == y_t else -1
-        target_t = (1-mu) * Q(s_t,a_t)
-                   + mu * (reward_t + gamma * max_a Q(s_{t+1}, a))
-        L_rl = MSE(Q(s_t,a_t), target_t)
-
-    Only valid consecutive utterance pairs are used; padded positions are ignored.
-    """
-    def __init__(self, hidden_size, n_classes, dropout=0.5, gamma=0.95, mu=0.5):
+    def __init__(self,n_classes=None, gamma=0.95, mu=0.5, shift_reward_w=0.5):
         super().__init__()
         self.n_classes = n_classes
         self.gamma = gamma
         self.mu = mu
-        self.q_net = nn.Sequential(
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size, n_classes)
-        )
+        self.shift_reward_w = shift_reward_w
+        self.env = RLEMOEnvironment()
 
-    def forward(self, fused_hidden, labels=None, mask=None):
-        # q_values is the Q-Net output: Q(s_t, a) for all emotion actions.
-        q_values = self.q_net(fused_hidden)  # [B, L, C]
-        log_prob = F.log_softmax(q_values, dim=-1)
-        prob = F.softmax(q_values, dim=-1)
+    def forward(self, state, q_values, labels=None, mask=None):
+        #q_values = self.q_head(q_values)  # [B, L, n_classes]
 
         rl_loss = q_values.new_tensor(0.0)
         rl_info = {}
-        if labels is not None and mask is not None:
-            labels = labels.long()
-            valid_mask = mask.bool()
+        if labels is None and mask is None:
+            return rl_loss, rl_info
+        if q_values.size(-1) != self.n_classes:
+            raise ValueError(f"Expected q_values with last dimension {self.n_classes}, got {q_values.size(-1)}")
 
-            # Action a_t is the emotion action with highest current Q-value.
-            q_action = torch.argmax(q_values, dim=-1)  # [B, L]
-            q_eval = q_values.gather(-1, q_action.unsqueeze(-1)).squeeze(-1)  # [B, L]
+        labels = labels.long()
+        valid_mask = mask.bool()
 
-            # Reward signal from RL-EMO: +1 for correct predicted action, -1 otherwise.
-            reward = torch.where(
-                q_action.eq(labels),
-                torch.ones_like(q_eval),
-                -torch.ones_like(q_eval)
-            )
+        q_action = torch.argmax(q_values, dim=-1)  # [B, L]
+        q_eval = q_values.gather(-1, q_action.unsqueeze(-1)).squeeze(-1)  # [B, L]
 
-            if q_values.size(1) > 1:
-                q_eval_t = q_eval[:, :-1]
-                reward_t = reward[:, :-1]
-                q_next_max = q_values[:, 1:, :].max(dim=-1).values
-                transition_mask = (valid_mask[:, :-1] & valid_mask[:, 1:]).float()
+        reward, reward_parts = self.env.reward(
+            actions=q_action,
+            labels=labels,
+            mask=valid_mask,
+            shift_reward_w=self.shift_reward_w
+        )
+        transition_mask = None
+        q_target = None
+        td_error = None
+        q_next_max = None
 
-                # Detach the target, as in DQN-style Bellman regression.
-                q_target = (1.0 - self.mu) * q_eval_t.detach() + \
-                           self.mu * (reward_t + self.gamma * q_next_max.detach())
-                diff = (q_eval_t - q_target).pow(2) * transition_mask
-                denom = transition_mask.sum().clamp_min(1.0)
-                rl_loss = diff.sum() / denom
+        if q_values.size(1) > 1:
+            q_eval_t = q_eval[:, :-1]
+            reward_t = reward[:, :-1]
+            q_next_max = q_values[:, 1:, :].max(dim=-1).values
+            transition_mask = self.env.transition_mask(valid_mask)
 
-                rl_info = {
-                    'q_action': q_action.detach(),
-                    'reward': reward.detach(),
-                    'transition_mask': transition_mask.detach(),
-                    'q_target': q_target.detach(),
-                }
+            # Detach the target, as in DQN-style Bellman regression.
+            q_target = (1.0 - self.mu) * q_eval_t.detach() + \
+                        self.mu * (reward_t + self.gamma * q_next_max.detach())
+            diff = (q_eval_t - q_target).pow(2) * transition_mask
+            denom = transition_mask.sum().clamp_min(1.0)
+            rl_loss = diff.sum() / denom
+            valid_count = valid_mask.float().sum().clamp_min(1.0)
+            action_acc = ((q_action == labels).float() * valid_mask.float()).sum() / valid_count
+            avg_reward = reward.sum() / valid_count
+
+            q_top2 = torch.topk(q_values, k=min(2, q_values.size(-1)), dim=-1)
+            if q_values.size(-1) >= 2:
+                q_margin = q_top2.values[..., 0] - q_top2.values[..., 1]
             else:
-                rl_info = {
-                    'q_action': q_action.detach(),
-                    'reward': reward.detach(),
-                }
+                q_margin = torch.zeros_like(q_eval)
 
-        return q_values, log_prob, prob, rl_loss, rl_info
+            rl_info = {
+            "state": state.detach(),
+            "q_values": q_values.detach(),
+            "q_probs": F.softmax(q_values, dim=-1).detach(),
+            "q_action": q_action.detach(),
+            "q_eval": q_eval.detach(),
+            "q_margin": q_margin.detach(),
+            "q_next_max": None if q_next_max is None else q_next_max.detach(),
+            "q_target": None if q_target is None else q_target.detach(),
+            "td_error": None if td_error is None else td_error.detach(),
+            "transition_mask": None if transition_mask is None else transition_mask.detach(),
+            "reward": reward.detach(),
+            "action_acc": action_acc.detach(),
+            "avg_reward": avg_reward.detach(),
+        }
 
+        rl_info.update(detach_dict(reward_parts))
+        return rl_loss, rl_info
 
 class Transformer_Based_Model(nn.Module):
     def __init__(self, dataset, D_text, D_visual, D_audio, n_head,
-                 n_classes, hidden_dim, n_speakers, dropout,
-                 rl_gamma=0.95, rl_mu=0.5):
+                 n_classes, hidden_dim, n_speakers, dropout, rl_loss_w=1.0,
+                 rl_gamma=0.95, rl_mu=0.5, rl_dep_w=0.2, rl_shift_w=0.5,):
         super(Transformer_Based_Model, self).__init__()
+        self.rl_loss_w = rl_loss_w
         self.n_classes = n_classes
         self.n_speakers = n_speakers
         self.dataset = dataset
@@ -433,8 +502,8 @@ class Transformer_Based_Model(nn.Module):
         self.vgate = EnhancedFilterModule(hidden_dim)
 
         # Inter-Speaker
-        self.gatTer = RGAT(hidden_dim, hidden_dim, num_relation=4).cuda()
-        self.gatT = RGAT(hidden_dim, hidden_dim, num_relation=4).cuda()
+        self.gatTer = RGAT(hidden_dim, hidden_dim, num_relation=4)
+        self.gatT = RGAT(hidden_dim, hidden_dim, num_relation=4)
 
         self.t_output_layer = nn.Sequential(
             nn.ReLU(),
@@ -452,24 +521,22 @@ class Transformer_Based_Model(nn.Module):
             nn.Linear(hidden_dim, n_classes)
             )
 
-        # Final classifier is replaced by an RL-EMO style Q-value module.
-        # DEDNet encoders + RSI/GAT act as the Q-Net feature extractor;
-        # this head maps fused dialogue features to Q-values over emotion actions.
-        self.multimodal_fusion = nn.Sequential(
-            nn.Linear(hidden_dim * 3, hidden_dim),
+        self.q_head = nn.Sequential(
+            # nn.Linear(hidden_dim, n_classes),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout)
-        )
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, n_classes)
+            )
+
         self.rl_classifier = RLEMOClassifier(
-            hidden_size=hidden_dim,
             n_classes=n_classes,
-            dropout=dropout,
             gamma=rl_gamma,
             mu=rl_mu
         )
 
-
     def forward(self, textf, visuf, acouf, u_mask, qmask, dia_len, Self_semantic_adj, Cross_semantic_adj, Semantic_adj, labels=None):
+        device = textf.device
         spk_idx = torch.argmax(qmask, -1)
         origin_spk_idx = spk_idx
         if self.n_speakers == 2:
@@ -485,10 +552,8 @@ class Transformer_Based_Model(nn.Module):
         textf, Cattention_weights = self.gatTer(textf, Cross_semantic_adj)
         textf, Sattention_weights = self.gatT(textf, Self_semantic_adj)
 
-        # Unimodal auxiliary logits are kept for the original AFL objective.
-        # They are no longer the final multimodal classifier.
         t = self.t_output_layer(textf)
-        sub_log_prog = [F.log_softmax(t, dim=-1)]
+        sub_log_prog = []
 
         if visuf is not None and acouf is not None:
             acouf = self.acouf_input(acouf.permute(1, 0, 2))
@@ -500,21 +565,80 @@ class Transformer_Based_Model(nn.Module):
 
             a = self.a_output_layer(acouf)
             v = self.v_output_layer(visuf)
+            all_final_out = t + a + v
+            sub_log_prog.append(F.log_softmax(t, dim=-1))
             sub_log_prog.append(F.log_softmax(a, dim=-1))
             sub_log_prog.append(F.log_softmax(v, dim=-1))
 
-            # Feature-level multimodal fusion before RL-EMO Q-value classification.
-            fused_hidden = self.multimodal_fusion(torch.cat([textf, acouf, visuf], dim=-1))
+            hidden_for_rl = textf + acouf + visuf #rl
+            
         else:
-            # DailyDialog/text-only setting.
-            fused_hidden = textf
+            all_final_out = t
+            sub_log_prog.append(F.log_softmax(t, dim=-1))
+ 
+            hidden_for_rl = textf #rl
 
-        # Final classifier: RL-EMO style Q-Net + Bellman emotion-flow loss.
-        q_values, all_log_prob, all_prob, rl_loss, rl_info = self.rl_classifier(
-            fused_hidden=fused_hidden,
-            labels=labels,
-            mask=u_mask
-        )
-        return sub_log_prog, all_log_prob, all_prob, q_values, rl_loss
+        all_log_prob = F.log_softmax(all_final_out, dim=-1)
+        all_prob = F.softmax(all_final_out, dim=-1) 
+        q_values = self.q_head(hidden_for_rl)
 
+        rl_info = {}
+        rl_loss = all_final_out.new_tensor(0.0)
+        if labels is not None and getattr(self, "rl_loss_w", 0.0) > 0.0:
+            rl_loss, rl_info = self.rl_classifier(
+                state=hidden_for_rl,
+                q_values=q_values,
+                labels=labels,
+                mask=u_mask
+            )
+        pred = torch.argmax(all_prob, dim=-1)
+        top2 = torch.topk(all_prob, k=min(2, self.n_classes), dim=-1)
+        confidence = top2.values[..., 0]
+        if self.n_classes >= 2:
+            cls_margin = top2.values[..., 0] - top2.values[..., 1]
+        else:
+            cls_margin = torch.zeros_like(confidence)
+
+        # modality contribution for predicted class
+        if visuf is not None and acouf is not None:
+            pred_idx = pred.unsqueeze(-1)
+
+            t_score = t.gather(-1, pred_idx).squeeze(-1)
+            a_score = a.gather(-1, pred_idx).squeeze(-1)
+            v_score = v.gather(-1, pred_idx).squeeze(-1)
+
+            modality_scores = torch.stack([t_score, a_score, v_score], dim=-1)
+            modality_contribution = F.softmax(modality_scores, dim=-1)
+
+            modality_info = {
+                "text_logits": t.detach(),
+                "audio_logits": a.detach(),
+                "visual_logits": v.detach(),
+                "text_prob": F.softmax(t, dim=-1).detach(),
+                "audio_prob": F.softmax(a, dim=-1).detach(),
+                "visual_prob": F.softmax(v, dim=-1).detach(),
+                "modality_contribution": modality_contribution.detach(),
+            }
+        else:
+            modality_info = {
+                "text_logits": t.detach(),
+                "text_prob": F.softmax(t, dim=-1).detach(),
+                "modality_contribution": torch.ones_like(pred, dtype=torch.float).unsqueeze(-1).detach(),
+            }
+
+        explain_info = {
+            "pred": pred.detach(),
+            "confidence": confidence.detach(),
+            "cls_margin": cls_margin.detach(),
+
+            "cross_attention": Cattention_weights[-1].detach(),
+            "self_attention": Sattention_weights[-1].detach(),
+
+            "q_values": q_values.detach(),
+            "q_probs": F.softmax(q_values, dim=-1).detach(),
+        }
+
+        explain_info.update(modality_info)
+
+        return sub_log_prog, all_log_prob, all_prob, all_final_out, q_values, rl_loss, rl_info, explain_info    
 
