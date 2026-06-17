@@ -1,3 +1,9 @@
+## Dataset
+
+We use the processed IEMOCAP and MELD [dataset](https://drive.google.com/drive/folders/1bw18Fy5FGLGwp1cpTH2QRohSY-Ewc-Rf?usp=sharing) for training and evaluation.
+
+## Training
+
 IEMOCAP:
 
 ```bash
@@ -9,6 +15,8 @@ MELD:
 python train.py --lr=0.00005 --batch-size=8 --hidden_dim=256 --windows=5 --epochs=20 --Dataset="MELD" --save_model_path="./MELD" --rl_gamma 0.8 --rl_mu 0.5 --rl_loss_w 1.0
 ```
 
-```inference
+## Inference
+
+```bash
 python inference.py --Dataset "IEMOCAP" --model_path "./IEMOCAP/checkpoint_01.pth"
 ```
