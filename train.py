@@ -49,7 +49,6 @@ def get_MELD_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=False, 
     testset = MELDDataset('data/meld_multimodal_features.pkl', train=False, windows=windows)
     test_loader = DataLoader(testset,
                              batch_size=batch_size,
-                             # 随机样本可视化注意力系数时使用
                              # shuffle=True,
                              collate_fn=testset.collate_fn,
                              num_workers=num_workers,
@@ -75,7 +74,6 @@ def get_IEMOCAP_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=True
     testset = IEMOCAPDataset("data/iemocap_multi_features.pkl", train=False, windows=windows)
     test_loader = DataLoader(testset,
                              batch_size=batch_size,
-                             # 随机样本可视化注意力系数时使用
                              # shuffle=True,
                              collate_fn=testset.collate_fn,
                              num_workers=num_workers,
@@ -101,7 +99,6 @@ def get_DailyDialog_loaders(batch_size=32, valid=0.1, num_workers=0, pin_memory=
     testset = DailyDialogDataset("data/dd_multimodal_features.pkl", train=False, windows=windows)
     test_loader = DataLoader(testset,
                              batch_size=batch_size,
-                             # 随机样本可视化注意力系数时使用
                              # shuffle=True,
                              collate_fn=testset.collate_fn,
                              num_workers=num_workers,
@@ -134,7 +131,6 @@ def train_or_eval_model(model, loss_function, dataloader, optimizer=None, train=
         lp_all = all_log_prob.view(-1, all_log_prob.size()[2])
         labels_ = label.view(-1)
 
-        #融合损失
         fusion_loss = loss_function(lp_all, labels_, umask)
 
         t_loss = loss_function(log_prob[0].view(-1, log_prob[0].size()[2]), labels_, umask)
@@ -238,7 +234,6 @@ if __name__ == '__main__':
                                                                      batch_size=batch_size,
                                                                     num_workers=0, windows=args.windows)
     elif args.Dataset == 'IEMOCAP':
-        # 这个权重是每一类的样本数与总样本数的比例的倒数，这样定义loss的作用是对样本不均衡的类别给予更高的权重
         loss_weights = torch.FloatTensor([1/0.086747,
                                         1/0.144406,
                                         1/0.227883,
@@ -293,7 +288,6 @@ if __name__ == '__main__':
     if best_state_dict is not None:
         torch.save(best_state_dict, best_save_path)
 
-    # Lưu epoch cuối
     torch.save(model.state_dict(), last_save_path)
     print('Model Performance:')
     print('Best_Test-FScore-epoch_index: {}'.format(all_fscore.index(max(all_fscore))+1))
