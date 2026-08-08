@@ -403,7 +403,7 @@ class MELDDataset(Dataset):
                     else:
                         if speaker[i] == speaker[j]:
                             if i == j:
-                                s[i, j] = 1  # 对角线  self
+                                s[i, j] = 1  # self
                         else:
                             if i < j:
                                 s[i, j] = 4  # inter-future
@@ -426,8 +426,7 @@ class MELDDataset(Dataset):
         Cross_semantic_adj = self.getCross_semantic_adj(data)
         Semantic_adj = self.get_semantic_adj(data)
         # print(semantic_adj.shape)
-        data = [pad_sequence(dat[i]) if i < 4 else pad_sequence(dat[i], True) if i < 6 else dat[i].tolist() for i in
-                dat]
+        data = [pad_sequence(dat[i]) if i < 4 else pad_sequence(dat[i], True) if i < 6 else dat[i].tolist() for i in dat]
         data.append(torch.LongTensor(Self_semantic_adj))
         data.append(torch.LongTensor(Cross_semantic_adj))
         data.append(torch.LongTensor(Semantic_adj))
