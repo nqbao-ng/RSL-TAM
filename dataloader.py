@@ -27,17 +27,16 @@ class IEMOCAPDataset(Dataset):
     def get_semantic_adj(self, data):
         semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers:  
+            s = torch.zeros(max_len, max_len, dtype=torch.long) 
+            for i in range(len(speaker)): 
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -46,7 +45,7 @@ class IEMOCAPDataset(Dataset):
                     else:
                         if speaker[i] == speaker[j]:
                             if i == j:
-                                s[i, j] = 1  # 对角线  self
+                                s[i, j] = 1 
                             elif i < j:
                                 s[i, j] = 2  # self-future
                             else:
@@ -62,17 +61,17 @@ class IEMOCAPDataset(Dataset):
     def  getSelf_semantic_adj(self, data):
         Self_semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+ 
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 
+            for i in range(len(speaker)):  
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -92,17 +91,17 @@ class IEMOCAPDataset(Dataset):
     def getCross_semantic_adj(self, data):
         Cross_semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 
+            for i in range(len(speaker)):  
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -111,7 +110,7 @@ class IEMOCAPDataset(Dataset):
                     else:
                         if speaker[i] == speaker[j]:
                             if i == j:
-                                s[i, j] = 1  # 对角线  self
+                                s[i, j] = 1  # self
                         else:
                             if i < j:
                                 s[i, j] = 4  # inter-future
@@ -170,17 +169,17 @@ class DailyDialogDataset(Dataset):
     def get_semantic_adj(self, data):
         semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long) 
+            for i in range(len(speaker)):  
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -189,7 +188,7 @@ class DailyDialogDataset(Dataset):
                     else:
                         if speaker[i] == speaker[j]:
                             if i == j:
-                                s[i, j] = 1  # 对角线  self
+                                s[i, j] = 1 
                             elif i < j:
                                 s[i, j] = 2  # self-future
                             else:
@@ -205,17 +204,17 @@ class DailyDialogDataset(Dataset):
     def  getSelf_semantic_adj(self, data):
         Self_semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long) 
+            for i in range(len(speaker)):  
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -235,17 +234,17 @@ class DailyDialogDataset(Dataset):
     def getCross_semantic_adj(self, data):
         Cross_semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+      
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long)  
+            for i in range(len(speaker)):  
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -254,7 +253,7 @@ class DailyDialogDataset(Dataset):
                     else:
                         if speaker[i] == speaker[j]:
                             if i == j:
-                                s[i, j] = 1  # 对角线  self
+                                s[i, j] = 1  # self
                         else:
                             if i < j:
                                 s[i, j] = 4  # inter-future
@@ -309,7 +308,7 @@ class MELDDataset(Dataset):
         self.len = len(self.keys)
 
     def __getitem__(self, index):
-        # dialog索引
+
         vid = self.keys[index]
         # vid = self.keys[37]
         return torch.FloatTensor(np.array(self.videoText[vid])),\
@@ -325,21 +324,21 @@ class MELDDataset(Dataset):
     def get_semantic_adj(self, data):
         semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+
         for i in range(len(data)):
             if max_len<len(data[i][3]):
                 max_len=len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers:  
+            s = torch.zeros(max_len, max_len, dtype=torch.long) 
+            for i in range(len(speaker)):  
                 for j in range(len(speaker)):
                     if speaker[i] == speaker[j]:
                         if i == j:
-                            s[i, j] = 1  # 对角线  self
+                            s[i, j] = 1 
                         elif i < j:
                             s[i, j] = 2  # self-future
                         else:
@@ -352,21 +351,20 @@ class MELDDataset(Dataset):
             semantic_adj.append(s)
         return torch.stack(semantic_adj)
 
-    # 相同说话者子图
     def getSelf_semantic_adj(self, data):
         Self_semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long) 
+            for i in range(len(speaker)): 
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
@@ -383,21 +381,20 @@ class MELDDataset(Dataset):
             Self_semantic_adj.append(s)
         return torch.stack(Self_semantic_adj)
 
-    # 不同说话者子图
     def getCross_semantic_adj(self, data):
         Cross_semantic_adj = []
         max_len = 0
-        # 获取一个batch中最大的对话长度
+
         for i in range(len(data)):
             if max_len < len(data[i][3]):
                 max_len = len(data[i][3])
         batch_speakers = []
         for i in range(len(data)):
             batch_speakers.append(data[i][3].tolist())
-        # 每个speakers是一个dialog
-        for speaker in batch_speakers:  # 遍历每个对话 对应的说话人列表（非去重）
-            s = torch.zeros(max_len, max_len, dtype=torch.long)  # （N,N） 0 表示填充部分 没有语义关系
-            for i in range(len(speaker)):  # 每个utterance 的说话人 和 其他 utterance 的说话人 是否相同
+
+        for speaker in batch_speakers: 
+            s = torch.zeros(max_len, max_len, dtype=torch.long) 
+            for i in range(len(speaker)):  
                 for j in range(i-self.windows, i+self.windows+1):
                     if j < 0:
                         continue
