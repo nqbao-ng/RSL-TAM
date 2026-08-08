@@ -179,7 +179,7 @@ if __name__ == '__main__':
     parser.add_argument('--windows', type=int, default=20, help='number of windows')
     parser.add_argument('--class-weight', action='store_true', default=True, help='use class weights')
     parser.add_argument('--Dataset', default='DailyDialog', help='dataset to train and test')
-    parser.add_argument('--save_model_path', default='./IEMOCAP', type=str, help='模型输出路径')
+    parser.add_argument('--save_model_path', default='./IEMOCAP', type=str)
     parser.add_argument('--rl_gamma', type=float, default=None, help='discount factor gamma for RL-EMO Bellman loss')
     parser.add_argument('--rl_mu', type=float, default=0.5, help='mixing factor mu for RL-EMO Bellman target')
     parser.add_argument('--rl_loss_w', type=float, default=0.0, help='weight for RL-EMO Bellman loss')
