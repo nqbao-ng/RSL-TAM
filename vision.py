@@ -99,5 +99,5 @@ def confuPLT(confusion, dataset):
     plt.ylabel('True')
     plt.title('Confusion Matrix')
     plt.show()
-    plt.savefig("./fig/dednet.png", dpi=600)
-    # plt.savefig("dednet_conf.png", dpi=600)
+    plt.savefig("./fig/confusion.png", dpi=600)
+
