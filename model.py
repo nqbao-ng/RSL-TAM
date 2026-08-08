@@ -157,7 +157,7 @@ class TransformerEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x_b, mask, speaker_emb=None):
-        # 将positon、model_feature信息相加
+ 
         if speaker_emb != None:
             x_b = self.pos_emb(x_b, speaker_emb)
             x_b = self.dropout(x_b)
@@ -175,8 +175,6 @@ class Unimodal_GatedFusion(nn.Module):
         final_rep = z * a
         return final_rep
 
-# torch.sigmoid()更适合快速计算;nn.Sigmoid()更适合构建可训练神经网络
-# nn.Sigmoid()是一个nn.Module,可以作为神经网络模块使用,具有可学习的参数,可以通过反向传播训练。torch.sigmoid()是一个固定的数学函数。
 class EnhancedFilterModule(nn.Module):
     def __init__(self, hidden_size):
         super().__init__()
@@ -210,8 +208,8 @@ class GraphAttentionLayer(nn.Module):
                   relation_dim=10):
         super(GraphAttentionLayer, self).__init__()
         self.dropout = dropout
-        self.in_features = in_features  # 输入特征维度
-        self.out_features = out_features  # 输出特征维度
+        self.in_features = in_features  
+        self.out_features = out_features 
         self.alpha = alpha
         self.concat = concat
         self.relation = relation
@@ -236,15 +234,15 @@ class GraphAttentionLayer(nn.Module):
         a_input = self._prepare_attentional_mechanism_input(Wh)  # (B, N, N, 2*D_out)
         if self.relation:
             long_adj = adj.clone().type(torch.LongTensor).cuda()
-            relation_one_hot = self.relation_embedding(long_adj)  # 得到每个关系对应的one-hot 固定表示
+            relation_one_hot = self.relation_embedding(long_adj) 
             a_input = torch.cat([a_input, relation_one_hot], dim=-1)  # （B, N, N, 2*D_out+num_relation）
-        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(3))  # (B, N , N)  所有部分都参与了计算 包括填充和没有关系连接的节点
+        e = self.leakyrelu(torch.matmul(a_input, self.a).squeeze(3))  # (B, N , N)  
         attention_score = F.softmax(e, dim=2)
         # TODO: Solve empty graph issue here!
         # attention_score = e
         if self.relation:
-            zero_vec = -9e15 * torch.ones_like(e)  # 计算mask
-            attention = torch.where(adj > 0, e, zero_vec)  # adj中非零位置 对应e的部分 保留，零位置(填充或没有关系连接)置为非常小的负数
+            zero_vec = -9e15 * torch.ones_like(e) 
+            attention = torch.where(adj > 0, e, zero_vec) 
             attention = F.softmax(attention, dim=2)  # B, N, N
         else:
             attention = F.softmax(e, dim=2)  # B, N, N
@@ -279,11 +277,11 @@ class RGAT(nn.Module):
         super(RGAT, self).__init__()
         self.dropout = dropout
         self.attentions = [GraphAttentionLayer(nfeat, nhid, dropout=dropout, alpha=alpha, concat=True, relation=True,
-                                               num_relation=num_relation) for _ in range(nheads)]  # 多头注意力
+                                               num_relation=num_relation) for _ in range(nheads)]  
         for i, attention in enumerate(self.attentions):
             self.add_module('attention_{}'.format(i), attention)
         self.out_att = GraphAttentionLayer(nfeat * nheads, nhid, dropout=dropout, alpha=alpha, concat=True,
-                                           relation=True, num_relation=num_relation)  # 恢复到正常维度
+                                           relation=True, num_relation=num_relation) 
 
         self.fc = nn.Linear(nhid, nhid)
         self.layer_norm = LayerNorm(nhid)
@@ -295,13 +293,13 @@ class RGAT(nn.Module):
         attened_outputs = []
         attention_weights = []
         for att_module in self.attentions:
-            # 计算注意力模块输出
+
             att_out, att_w = att_module(x, adj)
             # Graphplt(att_w)
-            # 添加到输出列表
+
             attened_outputs.append(att_out)
             attention_weights.append(att_w)
-            # 沿最后一个维度拼接
+
         x = torch.cat(attened_outputs, dim=-1)
         x = F.dropout(x, self.dropout, training=self.training)
         att_out, att_w = self.out_att(x, adj)
